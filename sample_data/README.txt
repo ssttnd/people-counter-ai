@@ -1,1 +1,0 @@
-Put a demo video here, e.g., sample_video.mp4. Do not upload private camera feeds.

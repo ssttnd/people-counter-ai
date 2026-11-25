@@ -1,26 +1,849 @@
-<!doctype html>
-<html>
+
+<!DOCTYPE html>
+<html lang="en">
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>People Counter</title>
-  <style>
-    body{font-family:system-ui, -apple-system, Segoe UI, Roboto, sans-serif;margin:0;padding:16px;background:#0b0b0b;color:#fff}
-    .card{max-width:900px;margin:0 auto;background:#151515;padding:16px;border-radius:16px;box-shadow:0 10px 30px rgba(0,0,0,.4)}
-    img{width:100%;border-radius:12px}
-    .row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
-    .pill{padding:6px 10px;background:#222;border-radius:999px}
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ARIA automated people counter</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            max-width: 1100px;
+            margin: 24px auto;
+            padding: 0 16px;
+            font-family: Arial, sans-serif;
+            color: #222;
+            background: #f5f5f5;
+        }
+
+        h1 {
+            font-size: 25px;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 20px;
+        }
+
+        #stage {
+            position: relative;
+            width: 100%;
+            background: #111;
+            overflow: hidden;
+            line-height: 0;
+        }
+
+        #video {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        #overlay {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            touch-action: none;
+        }
+
+        .panel {
+            margin-top: 16px;
+            padding: 16px;
+            background: white;
+            border-radius: 10px;
+        }
+
+        .time-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            font-size: 14px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            margin: 16px 0;
+            accent-color: #1677ff;
+            cursor: pointer;
+        }
+
+        button {
+            padding: 11px 15px;
+            margin: 4px 6px 4px 0;
+            border: 0;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        button:disabled,
+        input:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+
+        .primary {
+            color: white;
+            background: #1677ff;
+        }
+
+        .secondary {
+            color: #222;
+            background: #e5e5e5;
+        }
+
+        .ghost-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 10px;
+            font-size: 14px;
+            color: #333;
+            cursor: pointer;
+        }
+
+        .ghost-toggle input {
+            width: 16px;
+            height: 16px;
+            accent-color: #1677ff;
+            cursor: pointer;
+        }
+
+        .settings-section {
+            border-top: 1px solid #e5e5e5;
+            margin-top: 16px;
+            padding-top: 14px;
+        }
+
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 14px;
+            flex-wrap: wrap;
+            margin: 10px 0;
+        }
+
+        .setting-row label, .setting-label {
+            font-size: 14px;
+            color: #333;
+        }
+
+        .setting-input {
+            width: 110px;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .range-value {
+            min-width: 78px;
+            text-align: right;
+            font-size: 14px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .setting-range {
+            flex: 1 1 180px;
+            min-width: 140px;
+            margin: 8px 0 !important;
+        }
+
+        .subsettings {
+            padding-left: 24px;
+        }
+
+        #status {
+            margin-bottom: 0;
+            color: #555;
+            font-size: 14px;
+        }
+
+        .hint {
+            font-size: 14px;
+            line-height: 1.5;
+            color: #555;
+        }
+    </style>
 </head>
+
 <body>
-  <div class="card">
-    <h1>People Counter</h1>
-    <div class="row">
-      <span class="pill">Flask</span>
-      <span class="pill">OpenCV</span>
-      <span class="pill">YOLOv8</span>
+    <h1>ARIA automated people counter</h1>
+
+    <div id="stage">
+        <img id="video" src="/stream" alt="Video stream">
+        <canvas id="overlay"></canvas>
     </div>
-    <img src="/stream" alt="stream" />
-    <p>Tip: Rotate phone to landscape for better view.</p>
-  </div>
+
+    <div class="panel">
+        <div class="time-row">
+            <span id="currentTime">00:00</span>
+            <span id="totalTime">00:00</span>
+        </div>
+
+        <input
+            id="timeline"
+            type="range"
+            min="0"
+            max="0"
+            step="0.1"
+            value="0"
+            disabled
+            aria-label="Video timeline"
+        >
+
+        <div>
+            <button id="playPause" class="secondary" disabled>
+                Play
+            </button>
+            <button id="openVideo" class="primary">
+                Open Video
+            </button>
+            <button id="saveLine" class="primary">
+                Save Line
+            </button>
+            <button id="resetLine" class="secondary">
+                Reset Line
+            </button>
+        </div>
+        <p id="status">Loading video information...</p>
+
+        <div class="settings-section">
+            <strong>Tracking</strong>
+            <label class="ghost-toggle" for="showGhosts">
+                <input id="showGhosts" type="checkbox" checked>
+                Show ghost ID predictions
+            </label>
+            <p class="hint">Show predicted positions when a person is temporarily lost by the detector.</p>
+            <div class="setting-row">
+                <label for="ghostTimeout">Keep searching for a lost ID</label>
+                <input id="ghostTimeout" class="setting-range" type="range" min="1" max="20" step="1" value="5">
+                <span id="ghostTimeoutValue" class="range-value">5 s</span>
+            </div>
+            <p class="hint">How long the tracker tries to reconnect a person with their previous ID.</p>
+        </div>
+
+        <div class="settings-section">
+            <label class="ghost-toggle" for="enableSizeFilter">
+                <input id="enableSizeFilter" type="checkbox" checked>
+                Enable filter by height
+            </label>
+            <p class="hint">When enabled, detections outside the expected person-height range or too far from the counting line are marked in green and cannot be counted. They remain tracked so their IDs do not disappear prematurely.</p>
+
+            <div id="sizeFilterOptions" class="subsettings">
+                <div class="setting-row">
+                    <label for="referenceLineCm">Counting line reference length</label>
+                    <div>
+                        <input id="referenceLineCm" class="setting-input" type="number" min="50" max="300" step="1" value="170">
+                        <span>cm</span>
+                    </div>
+                </div>
+                <div class="setting-row">
+                    <label for="sizeTolerance">Allowed height deviation</label>
+                    <input id="sizeTolerance" class="setting-range" type="range" min="10" max="100" step="5" value="75">
+                    <span id="sizeToleranceValue" class="range-value">±75 cm</span>
+                </div>
+                <p id="acceptedSizeRange" class="hint">Expected apparent height: 95–245 cm</p>
+                <label class="ghost-toggle" for="showInvalidSizeBoxes">
+                    <input id="showInvalidSizeBoxes" type="checkbox" checked>
+                    Show out-of-range detections in green
+                </label>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const video = document.getElementById("video");
+        const canvas = document.getElementById("overlay");
+        const ctx = canvas.getContext("2d");
+
+        const timeline = document.getElementById("timeline");
+        const currentTimeLabel = document.getElementById("currentTime");
+        const totalTimeLabel = document.getElementById("totalTime");
+        const playPauseButton = document.getElementById("playPause");
+        const statusLabel = document.getElementById("status");
+        const showGhostsCheckbox = document.getElementById("showGhosts");
+        const ghostTimeout = document.getElementById("ghostTimeout");
+        const ghostTimeoutValue = document.getElementById("ghostTimeoutValue");
+
+        async function updateGhostSettings(payload) {
+            const response = await fetch("/ghost-visibility", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) throw new Error("Could not update ghost settings");
+            return response.json();
+        }
+
+        async function loadGhostVisibility() {
+            try {
+                const response = await fetch("/ghost-visibility", { cache: "no-store" });
+                const data = await response.json();
+                if (response.ok && typeof data.visible === "boolean") {
+                    showGhostsCheckbox.checked = data.visible;
+                    ghostTimeout.value = data.timeout_seconds ?? 5;
+                    ghostTimeoutValue.textContent = `${ghostTimeout.value} s`;
+                }
+            } catch (error) {
+                console.error("Could not load ghost visibility", error);
+            }
+        }
+
+        showGhostsCheckbox.addEventListener("change", async () => {
+            showGhostsCheckbox.disabled = true;
+            try {
+                await updateGhostSettings({ visible: showGhostsCheckbox.checked });
+            } catch (error) {
+                showGhostsCheckbox.checked = !showGhostsCheckbox.checked;
+                statusLabel.textContent = "Failed to update ghost visibility";
+            } finally {
+                showGhostsCheckbox.disabled = false;
+            }
+        });
+        loadGhostVisibility();
+        ghostTimeout.addEventListener("input", () => {
+            ghostTimeoutValue.textContent = `${ghostTimeout.value} s`;
+        });
+        ghostTimeout.addEventListener("change", async () => {
+            ghostTimeout.disabled = true;
+            try {
+                await updateGhostSettings({ timeout_seconds: Number(ghostTimeout.value) });
+            } catch (error) {
+                statusLabel.textContent = "Failed to update ghost ID timeout";
+            } finally {
+                ghostTimeout.disabled = false;
+            }
+        });
+
+        const enableSizeFilter = document.getElementById("enableSizeFilter");
+        const sizeFilterOptions = document.getElementById("sizeFilterOptions");
+        const sizeTolerance = document.getElementById("sizeTolerance");
+        const sizeToleranceValue = document.getElementById("sizeToleranceValue");
+        const referenceLineCm = document.getElementById("referenceLineCm");
+        const acceptedSizeRange = document.getElementById("acceptedSizeRange");
+        const showInvalidSizeBoxes = document.getElementById("showInvalidSizeBoxes");
+        let sizeSettingsSaveTimer = null;
+
+        function updateSizeRangeText() {
+            const reference = Math.max(50, Math.min(300, Number(referenceLineCm.value) || 170));
+            const tolerance = Number(sizeTolerance.value) || 75;
+            const minimum = Math.max(1, reference - tolerance);
+            const maximum = reference + tolerance;
+            sizeToleranceValue.textContent = `±${tolerance} cm`;
+            acceptedSizeRange.textContent = `Expected apparent height: ${minimum}–${maximum} cm`;
+            drawLine();
+        }
+
+        function updateSizeControls() {
+            const enabled = enableSizeFilter.checked;
+            sizeFilterOptions.style.opacity = enabled ? "1" : "0.5";
+            referenceLineCm.disabled = !enabled;
+            sizeTolerance.disabled = !enabled;
+            showInvalidSizeBoxes.disabled = !enabled;
+            if (!enabled) showInvalidSizeBoxes.checked = false;
+            updateSizeRangeText();
+        }
+
+        async function saveSizeSettings() {
+            const payload = {
+                size_filter_enabled: enableSizeFilter.checked,
+                show_invalid_size_boxes: enableSizeFilter.checked && showInvalidSizeBoxes.checked,
+                size_tolerance_cm: Number(sizeTolerance.value),
+                reference_line_cm: Number(referenceLineCm.value)
+            };
+            try {
+                const response = await fetch("/size-filter-settings", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!response.ok) throw new Error("Could not save size filter settings");
+            } catch (error) {
+                statusLabel.textContent = "Failed to save size filter settings";
+            }
+        }
+
+        function queueSaveSizeSettings() {
+            updateSizeControls();
+            clearTimeout(sizeSettingsSaveTimer);
+            sizeSettingsSaveTimer = setTimeout(saveSizeSettings, 180);
+        }
+
+        async function loadSizeSettings() {
+            try {
+                const response = await fetch("/size-filter-settings", { cache: "no-store" });
+                const data = await response.json();
+                if (!response.ok) throw new Error("Could not load size filter settings");
+                enableSizeFilter.checked = data.size_filter_enabled !== false;
+                showInvalidSizeBoxes.checked = data.show_invalid_size_boxes !== false;
+                sizeTolerance.value = data.size_tolerance_cm ?? 75;
+                referenceLineCm.value = data.reference_line_cm ?? 170;
+                updateSizeControls();
+            } catch (error) {
+                console.error("Could not load size filter settings", error);
+                updateSizeControls();
+            }
+        }
+
+        enableSizeFilter.addEventListener("change", queueSaveSizeSettings);
+        showInvalidSizeBoxes.addEventListener("change", queueSaveSizeSettings);
+        sizeTolerance.addEventListener("input", () => {
+            updateSizeRangeText();
+            queueSaveSizeSettings();
+        });
+        referenceLineCm.addEventListener("change", () => {
+            const value = Math.max(50, Math.min(300, Number(referenceLineCm.value) || 170));
+            referenceLineCm.value = value;
+            queueSaveSizeSettings();
+        });
+        loadSizeSettings();
+
+        let points = [[0.15, 0.5], [0.85, 0.5]];
+        let dragging = -1;
+        let isSeeking = false;
+        let seekTimer = null;
+        let lastSeekSent = 0;
+        let duration = 0;
+        let isFile = false;
+        let isPaused = true;
+        let playbackRequestPending = false;
+
+        function formatTime(seconds) {
+            if (!Number.isFinite(seconds) || seconds < 0) {
+                seconds = 0;
+            }
+
+            const total = Math.floor(seconds);
+            const minutes = Math.floor(total / 60);
+            const secs = total % 60;
+
+            return String(minutes).padStart(2, "0")
+                + ":" + String(secs).padStart(2, "0");
+        }
+
+        function resizeCanvas() {
+            const rect = video.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+
+            if (!rect.width || !rect.height) return;
+
+            canvas.width = Math.round(rect.width * dpr);
+            canvas.height = Math.round(rect.height * dpr);
+
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            drawLine();
+        }
+
+        function drawLine() {
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+
+            if (!width || !height) return;
+
+            ctx.clearRect(0, 0, width, height);
+
+            const a = [
+                points[0][0] * width,
+                points[0][1] * height
+            ];
+
+            const b = [
+                points[1][0] * width,
+                points[1][1] * height
+            ];
+
+            const dx = b[0] - a[0];
+            const dy = b[1] - a[1];
+            const length = Math.hypot(dx, dy);
+
+            if (length < 1) return;
+
+            // Visualize the configured size tolerance as parallel offsets from
+            // the counting line. The line itself remains the draggable reference.
+            const sizeFilterOn = document.getElementById("enableSizeFilter")?.checked ?? true;
+            const toleranceCm = Number(document.getElementById("sizeTolerance")?.value || 75);
+            const referenceCm = Number(document.getElementById("referenceLineCm")?.value || 170);
+            if (sizeFilterOn && referenceCm > 0) {
+                const offset = length * toleranceCm / referenceCm;
+                ctx.save();
+                ctx.setLineDash([7, 6]);
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = "rgba(255, 190, 40, 0.9)";
+                for (const sign of [-1, 1]) {
+                    ctx.beginPath();
+                    ctx.moveTo(a[0], a[1] + offset * sign);
+                    ctx.lineTo(b[0], b[1] + offset * sign);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            ctx.beginPath();
+            ctx.moveTo(...a);
+            ctx.lineTo(...b);
+            ctx.strokeStyle = "#00ff66";
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            const midX = (a[0] + b[0]) / 2;
+            const midY = (a[1] + b[1]) / 2;
+
+            const nx = -dy / length;
+            const ny = dx / length;
+            const offset = 48;
+
+            drawArrow(
+                midX, midY,
+                midX + nx * offset,
+                midY + ny * offset,
+                "#00ff66"
+            );
+
+            drawArrow(
+                midX, midY,
+                midX - nx * offset,
+                midY - ny * offset,
+                "#ffa500"
+            );
+
+            drawLabel(
+                "IN",
+                midX + nx * offset,
+                midY + ny * offset,
+                "#00ff66"
+            );
+
+            drawLabel(
+                "OUT",
+                midX - nx * offset,
+                midY - ny * offset,
+                "#ffa500"
+            );
+
+            for (const [x, y] of [a, b]) {
+                ctx.beginPath();
+                ctx.arc(x, y, 9, 0, Math.PI * 2);
+                ctx.fillStyle = "#fff";
+                ctx.fill();
+                ctx.lineWidth = 3;
+                ctx.strokeStyle = "#00bb55";
+                ctx.stroke();
+            }
+        }
+
+        function drawArrow(x1, y1, x2, y2, color) {
+            const angle = Math.atan2(y2 - y1, x2 - x1);
+            const size = 10;
+
+            ctx.beginPath();
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x2, y2);
+            ctx.lineTo(
+                x2 - size * Math.cos(angle - Math.PI / 6),
+                y2 - size * Math.sin(angle - Math.PI / 6)
+            );
+            ctx.moveTo(x2, y2);
+            ctx.lineTo(
+                x2 - size * Math.cos(angle + Math.PI / 6),
+                y2 - size * Math.sin(angle + Math.PI / 6)
+            );
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        function drawLabel(text, x, y, color) {
+            ctx.font = "bold 15px Arial";
+            ctx.textBaseline = "middle";
+
+            const width = ctx.measureText(text).width;
+            const px = Math.max(
+                4, Math.min(canvas.clientWidth - width - 8, x + 8)
+            );
+            const py = Math.max(
+                12, Math.min(canvas.clientHeight - 12, y - 12)
+            );
+
+            ctx.fillStyle = "rgba(0,0,0,0.75)";
+            ctx.fillRect(px - 3, py - 9, width + 6, 18);
+            ctx.fillStyle = color;
+            ctx.fillText(text, px, py);
+        }
+
+        function pointerPosition(event) {
+            const rect = canvas.getBoundingClientRect();
+
+            return [
+                (event.clientX - rect.left) / rect.width,
+                (event.clientY - rect.top) / rect.height
+            ];
+        }
+
+        canvas.addEventListener("pointerdown", event => {
+            const [x, y] = pointerPosition(event);
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+
+            let nearest = -1;
+            let distance = Infinity;
+
+            points.forEach((point, index) => {
+                const d = Math.hypot(
+                    (point[0] - x) * width,
+                    (point[1] - y) * height
+                );
+
+                if (d < distance) {
+                    distance = d;
+                    nearest = index;
+                }
+            });
+
+            if (distance <= 35) {
+                dragging = nearest;
+                canvas.setPointerCapture(event.pointerId);
+            }
+        });
+
+        canvas.addEventListener("pointermove", event => {
+            if (dragging < 0) return;
+
+            const [x, y] = pointerPosition(event);
+
+            points[dragging] = [
+                Math.max(0, Math.min(1, x)),
+                Math.max(0, Math.min(1, y))
+            ];
+
+            drawLine();
+            statusLabel.textContent = "Unsaved line changes";
+        });
+
+        function stopDragging() {
+            dragging = -1;
+        }
+
+        canvas.addEventListener("pointerup", stopDragging);
+        canvas.addEventListener("pointercancel", stopDragging);
+
+        document.getElementById("saveLine").addEventListener("click",
+            async () => {
+                try {
+                    const response = await fetch("/line", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json"
+                        },
+                        body: JSON.stringify(points)
+                    });
+
+                    if (!response.ok) throw new Error();
+
+                    statusLabel.textContent = "Line saved successfully";
+                } catch {
+                    statusLabel.textContent = "Failed to save line";
+                }
+            }
+        );
+
+        document.getElementById("resetLine").addEventListener("click",
+            () => {
+                points = [[0.15, 0.5], [0.85, 0.5]];
+                drawLine();
+                statusLabel.textContent =
+                    "Default line restored. Click Save Line to store it.";
+            }
+        );
+
+        async function loadLine() {
+            try {
+                const response = await fetch("/line");
+                if (!response.ok) throw new Error();
+
+                points = await response.json();
+                drawLine();
+            } catch {
+                statusLabel.textContent = "Failed to load line settings";
+            }
+        }
+
+        async function updateStatus() {
+            try {
+                const response = await fetch("/status", {
+                    cache: "no-store"
+                });
+
+                if (!response.ok) throw new Error();
+
+                const data = await response.json();
+
+                duration = data.duration || 0;
+                isFile = data.is_file;
+
+                if (typeof data.is_paused === "boolean") {
+                    isPaused = data.is_paused;
+                    playPauseButton.textContent = isPaused ? "Play" : "Stop";
+                }
+                playPauseButton.disabled = !isFile || playbackRequestPending;
+
+                totalTimeLabel.textContent = formatTime(duration);
+                timeline.disabled = !isFile || duration <= 0;
+
+                if (!isSeeking && isFile) {
+                    timeline.max = duration;
+                    timeline.value = data.current_time || 0;
+                    currentTimeLabel.textContent =
+                        formatTime(data.current_time);
+                } else if (!isFile) {
+                    currentTimeLabel.textContent = "--:--";
+                    totalTimeLabel.textContent = "--:--";
+                }
+
+                if (data.error) {
+                    statusLabel.textContent = data.error;
+                }
+            } catch {
+                statusLabel.textContent = "Cannot retrieve video status";
+            }
+        }
+
+        timeline.addEventListener("input", () => {
+            isSeeking = true;
+            currentTimeLabel.textContent = formatTime(
+                Number(timeline.value)
+            );
+            statusLabel.textContent = "Seeking...";
+        });
+
+        timeline.addEventListener("change", async () => {
+            clearTimeout(seekTimer);
+
+            const seconds = Number(timeline.value);
+
+            try {
+                const response = await fetch("/seek", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({ seconds })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || "Seek failed");
+                }
+
+                statusLabel.textContent =
+                    "Seeking to " + formatTime(seconds) + "...";
+            } catch (error) {
+                statusLabel.textContent = error.message;
+            } finally {
+                isSeeking = false;
+            }
+        });
+
+        const openVideoButton = document.getElementById("openVideo");
+
+        openVideoButton.addEventListener("click", async () => {
+            openVideoButton.disabled = true;
+            openVideoButton.textContent = "Selecting...";
+            statusLabel.textContent = "Choose a video file in the file dialog...";
+
+            try {
+                const response = await fetch("/choose-video", {
+                    method: "POST",
+                    cache: "no-store"
+                });
+
+                const result = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(result.error || "Failed to select video");
+                }
+
+                if (result.success) {
+                    // Reconnect the MJPEG stream so it loads the selected video.
+                    video.src = "/stream?t=" + Date.now();
+                    timeline.value = 0;
+                    currentTimeLabel.textContent = "00:00";
+                    isPaused = true;
+                    playPauseButton.textContent = "Play";
+                    statusLabel.textContent = "Opening selected video...";
+                    await updateStatus();
+                } else if (result.cancelled) {
+                    statusLabel.textContent = "Video selection cancelled";
+                } else {
+                    throw new Error(result.error || "Failed to select video");
+                }
+            } catch (error) {
+                statusLabel.textContent = error.message || "Failed to open video";
+                console.error("Open Video failed:", error);
+            } finally {
+                openVideoButton.disabled = false;
+                openVideoButton.textContent = "Open Video";
+            }
+        });
+
+        playPauseButton.addEventListener("click", async () => {
+            if (playbackRequestPending) return;
+
+            const action = isPaused ? "play" : "stop";
+            playbackRequestPending = true;
+            playPauseButton.disabled = true;
+            statusLabel.textContent = action === "play" ? "Starting playback..." : "Stopping playback...";
+
+            try {
+                const response = await fetch("/playback", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    cache: "no-store",
+                    body: JSON.stringify({ action })
+                });
+                const result = await response.json();
+
+                if (!response.ok || result.success === false) {
+                    throw new Error(result.error || "Playback control failed");
+                }
+
+                isPaused = typeof result.is_paused === "boolean"
+                    ? result.is_paused
+                    : action === "stop";
+                playPauseButton.textContent = isPaused ? "Play" : "Stop";
+                statusLabel.textContent = isPaused ? "Playback stopped" : "Playback started";
+            } catch (error) {
+                statusLabel.textContent = error.message || "Playback control failed";
+            } finally {
+                playbackRequestPending = false;
+                playPauseButton.disabled = !isFile;
+            }
+        });
+
+        new ResizeObserver(resizeCanvas).observe(video);
+
+        video.addEventListener("load", resizeCanvas);
+        window.addEventListener("resize", resizeCanvas);
+
+        loadLine().then(resizeCanvas);
+        updateStatus();
+        setInterval(updateStatus, 1000);
+    </script>
+
+    <footer style="max-width:1100px; margin:24px auto; padding:0 16px; color:#666; font-size:12px; line-height:1.5;">
+        Created with the help of AI, based on the open-source project
+        <a href="https://github.com/nhatbo286/people-counter-ai" target="_blank" rel="noopener noreferrer">people-counter-ai</a>.
+    </footer>
 </body>
 </html>

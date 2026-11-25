@@ -1,1 +1,0 @@
-Place model weights here if you want to pin versions; Ultralytics can auto-download defaults.

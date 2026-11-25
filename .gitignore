@@ -4,6 +4,18 @@ __pycache__/
 *.pkl
 *.pt
 *.onnx
+*.npz
 instance/
 .DS_Store
 venv/
+.venv/
+
+# videos (may contain identifiable people)
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# local development history
+app old/
+templates/template old/

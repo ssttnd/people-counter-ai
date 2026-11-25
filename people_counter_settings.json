@@ -1,0 +1,7 @@
+{
+  "size_filter_enabled": true,
+  "show_invalid_size_boxes": true,
+  "size_tolerance_cm": 30,
+  "reference_line_cm": 180,
+  "ghost_timeout_seconds": 3
+}
