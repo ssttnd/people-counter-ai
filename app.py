@@ -229,7 +229,6 @@ class Pipeline:
         fired = self.counter.update(t, tracked, ghosts)
         # don't draw things that never move (parked scooters etc. detected as people)
         tracked = [x for x in tracked if not self.people.is_static(x[0], x[1])]
-        ghosts = [g for g in ghosts if not self.people.is_static(g[0], g[1])]
         if cfg["size_filter_enabled"]:
             # no ghosts for filtered (e.g. far away) people: they would only clutter the view
             ghosts = [g for g in ghosts if size_is_plausible(
@@ -285,11 +284,14 @@ def draw_overlay(frame, tracked, ghosts, hidden_ids, cfg):
             if tid in hidden_ids:
                 continue
             x1, y1, x2, y2 = map(int, box)
-            overlay = frame.copy()
-            cv2.rectangle(overlay, (x1, y1), (x2, y2), (200, 200, 200), 2)
-            cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-            cv2.putText(frame, f"GHOST ID {tid}", (x1, max(18, y1 - 7)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (215, 215, 215), 1, cv2.LINE_AA)
+            color = (200, 200, 200)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (40, 40, 40), 5)       # dark outline
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 3)
+            label = f"GHOST ID {tid}"
+            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+            ty = max(th + 8, y1 - 6)
+            cv2.rectangle(frame, (x1, ty - th - 6), (x1 + tw + 8, ty + 4), (30, 30, 30), -1)
+            cv2.putText(frame, label, (x1 + 4, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2, cv2.LINE_AA)
 
 
 def message_frame(text, width=960, height=540):

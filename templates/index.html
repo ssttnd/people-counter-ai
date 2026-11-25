@@ -179,11 +179,13 @@ footer a{color:var(--gold)}
       <section>
         <h2>Ghost IDs</h2>
         <label class="switch"><input id="showGhosts" type="checkbox"> Show ghosts</label>
-        <div class="row">
-          <label for="ghostTimeout">Ghost timeout</label>
-          <span class="val" id="ghostTimeoutVal"></span>
+        <div class="sub" id="ghostOptions">
+          <div class="row">
+            <label for="ghostTimeout">Ghost timeout</label>
+            <span class="val" id="ghostTimeoutVal"></span>
+          </div>
+          <input id="ghostTimeout" type="range" min="1" max="20" step="1">
         </div>
-        <input id="ghostTimeout" type="range" min="1" max="20" step="1">
         <div class="legend">
           <span><i style="background:#28a0ff"></i>Tracked</span>
           <span><i style="background:#5ac85a"></i>Filtered</span>
@@ -345,6 +347,8 @@ function renderSettingsText() {
   $("ghostTimeoutVal").textContent = S.ghostTimeout.value + " s";
   $("sizeOptions").style.opacity = S.sizeFilter.checked ? 1 : .45;
   [S.referenceCm, S.tolerance, S.showInvalid].forEach(el => el.disabled = !S.sizeFilter.checked);
+  $("ghostOptions").style.opacity = S.showGhosts.checked ? 1 : .45;
+  S.ghostTimeout.disabled = !S.showGhosts.checked;
 }
 let saveTimer;
 function saveSettings() {
