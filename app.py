@@ -227,8 +227,6 @@ class Pipeline:
                 cfg["size_tolerance_cm"], cfg["reference_line_cm"])
             tracked.append((tid, box, countable))
         fired = self.counter.update(t, tracked, ghosts)
-        # don't draw things that never move (parked scooters etc. detected as people)
-        tracked = [x for x in tracked if not self.people.is_static(x[0], x[1])]
         if cfg["size_filter_enabled"]:
             # no ghosts for filtered (e.g. far away) people: they would only clutter the view
             ghosts = [g for g in ghosts if size_is_plausible(

@@ -281,8 +281,6 @@ class PeopleTracker:
         self.window_frames = max(3, int(round(velocity_window_s * self.frame_rate)))
         self._history = {}             # id -> [(frame_id, box xyxy)] of real observations
         self._alias = {}               # tracker id -> id shown/counted (re-identified ghosts)
-        self._motion = {}              # id -> [first_frame, first_centre, max_displacement]
-        self.static_after_frames = 2.0 * self.frame_rate
         self.set_ghost_timeout(ghost_timeout_s)
 
     def set_ghost_timeout(self, seconds):
@@ -294,7 +292,6 @@ class PeopleTracker:
         self.tracker.reset()
         self._history.clear()
         self._alias.clear()
-        self._motion.clear()
 
     def _velocity(self, hist):
         """Pixels per frame of the box centre, fitted on the last observations."""
@@ -337,16 +334,6 @@ class PeopleTracker:
         self.tracker.lost_stracks.remove(best)
         return self._display_id(best.track_id)
 
-    def is_static(self, tid, box):
-        """True for objects that have not moved for 2 s (parked scooters, posters...).
-
-        A person who stands still and then walks off becomes non-static again.
-        """
-        m = self._motion.get(tid)
-        if m is None or self.tracker.frame_id - m[0] < self.static_after_frames:
-            return False
-        return m[2] < 0.25 * (box[3] - box[1])
-
     def _display_id(self, raw):
         return self._alias.get(int(raw)) or int(raw)
 
@@ -368,9 +355,6 @@ class PeopleTracker:
                 self._alias[raw] = self._reidentify(box, frame_id)
             tid = self._display_id(raw)
             tracked.append((tid, box, float(r[5])))
-            centre = np.array([(box[0] + box[2]) / 2, (box[1] + box[3]) / 2])
-            m = self._motion.setdefault(tid, [frame_id, centre, 0.0])
-            m[2] = max(m[2], float(np.linalg.norm(centre - m[1])))
             hist = self._history.setdefault(tid, [])
             hist.append((frame_id, box))
             while hist and frame_id - hist[0][0] > self.window_frames:
@@ -379,7 +363,6 @@ class PeopleTracker:
         alive = {self._display_id(st.track_id) for st in self.tracker.tracked_stracks + self.tracker.lost_stracks}
         if len(self._history) > 2 * len(alive) + 50:
             self._history = {k: v for k, v in self._history.items() if k in alive}
-            self._motion = {k: v for k, v in self._motion.items() if k in alive}
 
         height, width = shape[:2]
         live_boxes = [box for _, box, _ in tracked]
