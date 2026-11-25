@@ -1350,7 +1350,28 @@ def return_from_process():
     return jsonify({"success": True})
 
 
+def _open_browser_when_ready(url, timeout=60.0):
+    """Open the UI in the default browser as soon as the server answers."""
+    import urllib.request
+    import webbrowser
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            urllib.request.urlopen(url + "line", timeout=1)
+            break
+        except OSError:
+            time.sleep(0.3)
+    webbrowser.open(url)
+
+
 if __name__ == "__main__":
+    import sys
+
+    if "--open-browser" in sys.argv:
+        threading.Thread(
+            target=_open_browser_when_ready, args=("http://127.0.0.1:5000/",), daemon=True,
+        ).start()
     app.run(
         host="0.0.0.0",
         port=5000,

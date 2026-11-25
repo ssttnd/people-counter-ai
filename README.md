@@ -21,15 +21,20 @@ with a new UI, a hand-labelled evaluation, and a rewritten counting algorithm.
 
 ## Quick start (Windows)
 
+Double-click **`start.bat`**. On the first run it creates a Python environment and
+installs the packages (a few minutes, needs Python 3.10+). It then starts the server
+and opens http://127.0.0.1:5000 in your browser. Close the console window to stop.
+
+Manual alternative:
+
 ```powershell
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scriptsctivate
 pip install -r requirements.txt
-python app.py
+python app.py --open-browser
 ```
 
-Open http://127.0.0.1:5000. `start.bat` does the last two steps. The YOLO weights
-(`yolov8n.pt`, 6 MB) are downloaded automatically on first run.
+The YOLO weights (`yolov8n.pt`, 6 MB) are downloaded automatically on first run.
 
 Environment variables:
 
