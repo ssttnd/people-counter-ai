@@ -268,12 +268,18 @@ class PeopleTracker:
     drawn. If the tracker still starts a new ID for someone who reappears near a
     ghost of similar size, the new ID is mapped back to the ghost's ID.
 
+    Direction check: when a lost person is picked up again (by the tracker or by
+    the remapping above), their ID is "pending" for ``confirm_s``. If during that
+    time the person clearly walks the opposite way to the ghost, it was someone
+    else: they get a new ID. Pending IDs are listed in ``pending_ids`` so the
+    counter can ignore them until confirmed (no false turn-back cancellations).
+
     Ghosts are only kept for real people (confirmed for ``ghost_min_frames``
     frames), inside the image and not on top of someone currently detected.
     """
 
     def __init__(self, cfg_path=None, frame_rate=30, ghost_timeout_s=3.0, ghost_min_frames=8,
-                 ghost_glide_s=None, velocity_window_s=0.5):
+                 ghost_glide_s=None, velocity_window_s=0.5, confirm_s=0.3):
         self.frame_rate = float(frame_rate) or 30.0
         self.tracker = make_tracker(cfg_path, frame_rate=int(round(self.frame_rate)))
         self.ghost_min_frames = ghost_min_frames
@@ -281,6 +287,9 @@ class PeopleTracker:
         self.window_frames = max(3, int(round(velocity_window_s * self.frame_rate)))
         self._history = {}             # id -> [(frame_id, box xyxy)] of real observations
         self._alias = {}               # tracker id -> id shown/counted (re-identified ghosts)
+        self._pending = {}             # id -> (first frame after re-acquisition, ghost velocity)
+        self._next_fresh = 1_000_000   # IDs given to people split off a wrong re-identification
+        self.confirm_frames = max(3, int(round(confirm_s * self.frame_rate)))
         self.set_ghost_timeout(ghost_timeout_s)
 
     def set_ghost_timeout(self, seconds):
@@ -292,6 +301,20 @@ class PeopleTracker:
         self.tracker.reset()
         self._history.clear()
         self._alias.clear()
+        self._pending.clear()
+
+    @property
+    def pending_ids(self):
+        """IDs re-acquired from a ghost and not yet confirmed by their walking direction."""
+        return set(self._pending)
+
+    def _moving(self, v, height):
+        """Is a velocity (px/frame) a real walk, not jitter? (> 0.15 body heights / s)"""
+        return float(np.linalg.norm(v)) > 0.15 * height / self.frame_rate
+
+    @staticmethod
+    def _opposite(a, b):
+        return float(np.dot(a, b)) < 0.0
 
     def _velocity(self, hist):
         """Pixels per frame of the box centre, fitted on the last observations."""
@@ -326,6 +349,13 @@ class PeopleTracker:
             if not 0.7 <= h / max(gh, 1.0) <= 1.4:
                 continue
             d = float(np.hypot(cx - (g[0] + g[2]) / 2, cy - (g[1] + g[3]) / 2))
+            # the new person must not appear *behind* where the ghost started walking
+            last = self._history[tid][-1][1]
+            moved = np.array([cx - (last[0] + last[2]) / 2, cy - (last[1] + last[3]) / 2])
+            gv = self._velocity(self._history[tid])
+            if (self._moving(gv, gh) and np.linalg.norm(moved) > 0.3 * gh
+                    and float(np.dot(moved, gv)) < -0.3 * np.linalg.norm(moved) * np.linalg.norm(gv)):
+                continue
             if d <= 0.6 * max(h, gh) and (best_d is None or d < best_d):
                 best, best_d = st, d
         if best is None:
@@ -354,15 +384,32 @@ class PeopleTracker:
             if raw not in self._alias and raw not in self._history:
                 self._alias[raw] = self._reidentify(box, frame_id)
             tid = self._display_id(raw)
-            tracked.append((tid, box, float(r[5])))
             hist = self._history.setdefault(tid, [])
+            if hist and frame_id - hist[-1][0] > 1 and tid not in self._pending:
+                gv = self._velocity(hist)    # re-acquired after being a ghost
+                if self._moving(gv, hist[-1][1][3] - hist[-1][1][1]):
+                    self._pending[tid] = (frame_id, gv)
             hist.append((frame_id, box))
             while hist and frame_id - hist[0][0] > self.window_frames:
                 hist.pop(0)
+            if tid in self._pending and frame_id - self._pending[tid][0] >= self.confirm_frames:
+                start, gv = self._pending.pop(tid)
+                new = [h for h in hist if h[0] >= start]
+                nv = self._velocity(new)
+                if self._moving(nv, box[3] - box[1]) and self._opposite(nv, gv):
+                    # walking the other way: a different person, give them a new ID
+                    fresh = self._next_fresh
+                    self._next_fresh += 1
+                    self._alias[raw] = fresh
+                    self._history[fresh] = new
+                    self._history[tid] = [h for h in hist if h[0] < start]
+                    tid = fresh
+            tracked.append((tid, box, float(r[5])))
 
         alive = {self._display_id(st.track_id) for st in self.tracker.tracked_stracks + self.tracker.lost_stracks}
         if len(self._history) > 2 * len(alive) + 50:
             self._history = {k: v for k, v in self._history.items() if k in alive}
+        self._pending = {k: v for k, v in self._pending.items() if k in alive}
 
         height, width = shape[:2]
         live_boxes = [box for _, box, _ in tracked]
@@ -405,4 +452,5 @@ def run_tracker_on_cache(cache_path, tracker_cfg=None, conf_floor=0.1, ghost_tim
     for i in range(n):
         d = det[bounds[i]:bounds[i + 1]]
         tracked, ghosts = people.update(d[d[:, 4] >= conf_floor], shape)
-        yield i, tracked, ghosts
+        pending = people.pending_ids
+        yield i, [x for x in tracked if x[0] not in pending], ghosts

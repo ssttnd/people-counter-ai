@@ -207,7 +207,7 @@ class Pipeline:
                                     ghost_timeout_s=ghost_timeout_s)
         self.counter = LineCounter(
             (0, 0), (1, 1), min_offset_px=15.0 * scale, lost_near_px=60.0 * scale,
-            cancel_window_s=1.5, lost_predict_s=0.0, ghost_count_s=20.0,
+            cancel_window_s=0.0, lost_predict_s=0.0, ghost_count_s=20.0,
         )
 
     def step(self, frame, t, p1, p2, cfg, dets=None):
@@ -226,7 +226,9 @@ class Pipeline:
                 box, p1, p2, self.width, self.height,
                 cfg["size_tolerance_cm"], cfg["reference_line_cm"])
             tracked.append((tid, box, countable))
-        fired = self.counter.update(t, tracked, ghosts)
+        # people just re-acquired from a ghost don't count until their direction is confirmed
+        pending = self.people.pending_ids
+        fired = self.counter.update(t, [x for x in tracked if x[0] not in pending], ghosts)
         if cfg["size_filter_enabled"]:
             # no ghosts for filtered (e.g. far away) people: they would only clutter the view
             ghosts = [g for g in ghosts if size_is_plausible(

@@ -24,7 +24,8 @@ def run(cache, tracker_cfg, conf, counter_kwargs, line=None, size_filter=None):
     from app import _size_is_plausible
     data = np.load(cache)
     w, h, fps = float(data["width"]), float(data["height"]), float(data["fps"])
-    line = line or json.loads((ROOT / "line_config.json").read_text())
+    # the line the ground truth was labelled for (not the one currently saved in the app)
+    line = line or json.loads((ROOT / "eval" / "kimep_line.json").read_text())
     p1 = (line[0][0] * w, line[0][1] * h)
     p2 = (line[1][0] * w, line[1][1] * h)
     counter = LineCounter(p1, p2, **counter_kwargs)

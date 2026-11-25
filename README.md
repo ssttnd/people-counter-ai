@@ -65,8 +65,9 @@ or Flask, so it can be tested on its own:
 2. **Hysteresis.** A person must be at least 15 px (at 1280 px width) away from the line
    on both sides. Box jitter while someone stands in the doorway can't flip the side.
 3. **Confirmed tracks only.** A track has to exist for 3 frames before it can count.
-4. **Turning back.** If the same person crosses back within 1.5 s, the first event is
-   cancelled.
+4. **Once per direction.** A track counts at most one IN and one OUT. Counts never go
+   down: cancelling a "turn-back" was dropped because in a doorway it was mostly two
+   different people swapping IDs (one entering, one leaving).
 5. **Ghosts.** When the tracker loses a person (typically while walking through the door),
    their ghost keeps moving at the person's measured walking speed (fitted on the last
    0.5 s of real detections) for 1 s, then waits in place until the ghost timeout. The
@@ -74,7 +75,10 @@ or Flask, so it can be tested on its own:
    to a detection overlapping the ghost. If the ghost crosses the segment, the crossing counts; if the person reappears on
    the original side, rule 4 cancels it. The ghosts are the tracker's own lost tracks
    (`PeopleTracker` in `counting.py`), so the ghost you see, the ID that comes back and the
-   ID that is counted are always the same.
+   ID that is counted are always the same. When a lost person is picked up again, the ID
+   is confirmed only if they keep walking in the ghost's direction (checked over 0.3 s);
+   someone walking the opposite way gets a new ID, and nothing is counted for the ID
+   until it is confirmed.
 6. **Height filter** (optional, see above) decides whether a crossing may be counted.
 
 ## Accuracy
