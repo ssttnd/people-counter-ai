@@ -28,20 +28,19 @@ def run(cache, tracker_cfg, conf, counter_kwargs, line=None, size_filter=None):
     p1 = (line[0][0] * w, line[0][1] * h)
     p2 = (line[1][0] * w, line[1][1] * h)
     counter = LineCounter(p1, p2, **counter_kwargs)
-    current, batch = 0, []
-    for frame_no, tid, box, _c in run_tracker_on_cache(cache, tracker_cfg, conf_floor=conf):
-        if frame_no != current:
-            counter.update(current / fps, batch)
-            for k in range(current + 1, frame_no):     # frames without tracks
-                counter.update(k / fps, [])
-            current, batch = frame_no, []
-        ok = True
-        if size_filter:
-            ok = _size_is_plausible(box, p1, p2, w, h, enabled=True, **size_filter)
-        batch.append((tid, box, ok))
-    counter.update(current / fps, batch)
+    use_ghosts = counter_kwargs.get("ghost_count_s", 1.0) > 0
+    last = 0
+    for frame_no, tracked, ghosts in run_tracker_on_cache(cache, tracker_cfg, conf_floor=conf):
+        batch = []
+        for tid, box, _c in tracked:
+            ok = True
+            if size_filter:
+                ok = _size_is_plausible(box, p1, p2, w, h, enabled=True, **size_filter)
+            batch.append((tid, box, ok))
+        counter.update(frame_no / fps, batch, ghosts if use_ghosts else ())
+        last = frame_no
     for k in range(1, int(5 * fps)):
-        counter.update((current + k) / fps, [])
+        counter.update((last + k) / fps, [])
     events = [e for e in counter.events if not e.get("cancel")]
     cancelled = [e for e in counter.events if e.get("cancel")]
     for c in cancelled:   # remove the event that was undone

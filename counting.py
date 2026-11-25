@@ -56,7 +56,7 @@ class LineCounter:
     def __init__(
         self, p1, p2, *, min_offset_px=8.0, segment_margin=0.15, min_hits=3,
         cancel_window_s=1.5, lost_predict_s=0.7, lost_near_px=60.0,
-        lost_after_s=0.35, forget_after_s=5.0, anchor="center",
+        lost_after_s=0.35, forget_after_s=5.0, anchor="center", ghost_count_s=1.0,
     ):
         self.p1 = np.asarray(p1, float)
         self.p2 = np.asarray(p2, float)
@@ -69,6 +69,7 @@ class LineCounter:
         self.lost_after_s = lost_after_s
         self.forget_after_s = forget_after_s
         self.anchor = anchor
+        self.ghost_count_s = ghost_count_s
         self.tracks: dict[int, _Track] = {}
         self.count_in = 0
         self.count_out = 0
@@ -131,10 +132,28 @@ class LineCounter:
         self.events.append({"t": t, "id": tid, "dir": direction})
         return direction
 
-    def update(self, t, tracked):
-        """tracked: iterable of (track_id, box, in_range). Returns list of (id, direction)."""
+    def update(self, t, tracked, ghosts=()):
+        """Advance the counter by one frame.
+
+        tracked: iterable of (track_id, box, countable) for people detected now.
+        ghosts:  iterable of (track_id, predicted_box, age_s) for people the tracker
+                 has temporarily lost (the grey "ghost" boxes). A ghost that crosses
+                 the line within ``ghost_count_s`` of being lost is counted, because
+                 people walking through a door are often hidden by the frame before
+                 their detected centre crosses. If the person then reappears on the
+                 original side, the event is cancelled like any turn-back.
+        Returns a list of (track_id, direction) for events counted in this frame.
+        """
         fired = []
         seen = set()
+        for tid, box, age in ghosts:
+            tr = self.tracks.get(tid)
+            if tr is None or tr.hits < self.min_hits or age > self.ghost_count_s:
+                continue
+            seen.add(tid)
+            direction = self._observe(tid, tr, box_anchor(box, self.anchor), t)
+            if direction:
+                fired.append((tid, direction))
         for tid, box, in_range in tracked:
             seen.add(tid)
             point = box_anchor(box, self.anchor)
@@ -145,25 +164,15 @@ class LineCounter:
             tr.history.append((t, point))
             if len(tr.history) > 15:
                 tr.history.pop(0)
+            tr.finished = False
             if tr.hits < self.min_hits:
                 continue
-            dist = self.signed_distance(point)
-            if abs(dist) < self.min_offset_px:
-                continue                      # inside the hysteresis band
-            new_side = 1 if dist > 0 else -1
-            if tr.side == 0:
-                tr.side, tr.side_point, tr.side_time = new_side, point, t
-                continue
-            if new_side != tr.side:
-                if self._crosses_segment(tr.side_point, point):
-                    direction = self._emit(tid, tr, new_side, t)
-                    if direction:
-                        fired.append((tid, direction))
-                tr.side = new_side
-            tr.side_point, tr.side_time = point, t
+            direction = self._observe(tid, tr, point, t)
+            if direction:
+                fired.append((tid, direction))
 
         for tid, tr in list(self.tracks.items()):
-            if tid in seen:
+            if tid in seen and t == tr.last_time:
                 continue
             gap = t - tr.last_time
             if gap > self.forget_after_s:
@@ -175,6 +184,22 @@ class LineCounter:
                 if direction:
                     fired.append((tid, direction))
         return fired
+
+    def _observe(self, tid, tr, point, t):
+        """Apply hysteresis + finite-segment crossing test to one position."""
+        dist = self.signed_distance(point)
+        if abs(dist) < self.min_offset_px:
+            return None                       # inside the hysteresis band
+        new_side = 1 if dist > 0 else -1
+        direction = None
+        if tr.side == 0:
+            tr.side = new_side
+        elif new_side != tr.side:
+            if self._crosses_segment(tr.side_point, point):
+                direction = self._emit(tid, tr, new_side, t)
+            tr.side = new_side
+        tr.side_point, tr.side_time = point, t
+        return direction
 
     def _velocity(self, tr):
         hist = tr.history[-8:]
@@ -211,7 +236,7 @@ class LineCounter:
         self.events.clear()
 
 
-# ---------------------------------------------------------------------- offline
+# --------------------------------------------------------------------- tracking
 def make_tracker(cfg_path=None, frame_rate=30):
     """Create an Ultralytics BYTETracker/BOTSORT instance from a yaml file."""
     from ultralytics.trackers.track import TRACKER_MAP
@@ -222,29 +247,132 @@ def make_tracker(cfg_path=None, frame_rate=30):
     return TRACKER_MAP[cfg.tracker_type](args=cfg, frame_rate=frame_rate)
 
 
-def track_detections(tracker, dets, shape, frame=None):
-    """Run one tracker step on an (N,5) array [x1,y1,x2,y2,conf]. Returns [(id, box, conf)]."""
-    from ultralytics.engine.results import Boxes
-
-    if len(dets) == 0:
-        dets = np.zeros((0, 6), np.float32)
-    else:
-        dets = np.hstack([dets[:, :5], np.zeros((len(dets), 1), np.float32)])
-    out = tracker.update(Boxes(dets, shape), frame)
-    return [(int(r[4]), r[:4].astype(float), float(r[5])) for r in out]
+def _iou(a, b):
+    iw = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    ih = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    inter = iw * ih
+    union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
+    return inter / union if union > 0 else 0.0
 
 
-def run_tracker_on_cache(cache_path, tracker_cfg=None, conf_floor=0.1):
+class PeopleTracker:
+    """BoT-SORT/ByteTrack driven frame by frame, plus "ghosts".
+
+    A ghost is a person the tracker has temporarily lost. It moves on from the
+    person's last *observed* position with the person's *measured* walking speed
+    (least-squares over the last ``velocity_window_s`` of real detections) for
+    ``ghost_glide_s`` seconds, then stays where it is until the timeout.
+
+    The tracker's own prediction for a lost person is overwritten with the ghost
+    every frame, so the tracker looks for the person exactly where the ghost is
+    drawn: an ID can only come back to a detection that overlaps the ghost.
+
+    Ghosts are only kept for real people (confirmed for ``ghost_min_frames``
+    frames), inside the image and not on top of someone currently detected.
+    """
+
+    def __init__(self, cfg_path=None, frame_rate=30, ghost_timeout_s=3.0, ghost_min_frames=8,
+                 ghost_glide_s=1.0, velocity_window_s=0.5):
+        self.frame_rate = float(frame_rate) or 30.0
+        self.tracker = make_tracker(cfg_path, frame_rate=int(round(self.frame_rate)))
+        self.ghost_min_frames = ghost_min_frames
+        self.glide_frames = ghost_glide_s * self.frame_rate
+        self.window_frames = max(3, int(round(velocity_window_s * self.frame_rate)))
+        self._history = {}             # id -> [(frame_id, box xyxy)] of real observations
+        self.set_ghost_timeout(ghost_timeout_s)
+
+    def set_ghost_timeout(self, seconds):
+        """How long a lost person keeps their ID (and ghost) before being dropped."""
+        self.ghost_timeout_s = float(seconds)
+        self.tracker.max_time_lost = max(1, int(round(self.ghost_timeout_s * self.frame_rate)))
+
+    def reset(self):
+        self.tracker.reset()
+        self._history.clear()
+
+    def _velocity(self, hist):
+        """Pixels per frame of the box centre, fitted on the last observations."""
+        if len(hist) < 3:
+            return np.zeros(2)
+        f = np.array([h[0] for h in hist], float)
+        if f[-1] - f[0] < 2:
+            return np.zeros(2)
+        c = np.array([[(b[0] + b[2]) / 2, (b[1] + b[3]) / 2] for _, b in hist])
+        v = np.array([np.polyfit(f, c[:, k], 1)[0] for k in range(2)])
+        height = hist[-1][1][3] - hist[-1][1][1]
+        max_speed = 1.5 * height / self.frame_rate     # ~1.5 body heights per second
+        speed = float(np.linalg.norm(v))
+        return v * (max_speed / speed) if speed > max_speed > 0 else v
+
+    def _ghost_box(self, tid, frames_lost):
+        hist = self._history[tid]
+        box = hist[-1][1]
+        shift = self._velocity(hist) * min(frames_lost, self.glide_frames)
+        return box + np.array([shift[0], shift[1], shift[0], shift[1]])
+
+    def update(self, dets, shape):
+        """dets: (N,5) [x1,y1,x2,y2,conf]. Returns (tracked, ghosts).
+
+        tracked: [(id, box, conf)]   ghosts: [(id, predicted_box, age_s)]
+        """
+        from ultralytics.engine.results import Boxes
+
+        dets = np.asarray(dets, np.float32).reshape(-1, 5)
+        data = np.hstack([dets, np.zeros((len(dets), 1), np.float32)])
+        out = self.tracker.update(Boxes(data, shape), None)
+        frame_id = self.tracker.frame_id
+        tracked = []
+        for r in out:
+            tid, box = int(r[4]), dets[int(r[-1])][:4].astype(float)   # the real detection box
+            tracked.append((tid, box, float(r[5])))
+            hist = self._history.setdefault(tid, [])
+            hist.append((frame_id, box))
+            while hist and frame_id - hist[0][0] > self.window_frames:
+                hist.pop(0)
+
+        alive = {int(st.track_id) for st in self.tracker.tracked_stracks + self.tracker.lost_stracks}
+        if len(self._history) > 2 * len(alive) + 50:
+            self._history = {k: v for k, v in self._history.items() if k in alive}
+
+        height, width = shape[:2]
+        live_boxes = [box for _, box, _ in tracked]
+        ghosts = []
+        for st in self.tracker.lost_stracks:
+            tid = int(st.track_id)
+            if tid not in self._history or st.mean is None:
+                continue
+            lost = frame_id - st.end_frame
+            box = self._ghost_box(tid, lost)
+            # Make the tracker search for this person where the ghost is, and move
+            # it with the same speed during the glide, then keep it still.
+            st.mean[:4] = st.convert_coords(np.array([box[0], box[1], box[2] - box[0], box[3] - box[1]]))
+            st.mean[4:8] = 0.0
+            if lost + 1 <= self.glide_frames:
+                st.mean[4:6] = self._velocity(self._history[tid])
+            age = lost / self.frame_rate
+            if st.tracklet_len < self.ghost_min_frames or age <= 0 or age > self.ghost_timeout_s:
+                continue
+            cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+            if not (0 <= cx < width and 0 <= cy < height):
+                continue                      # walked out of the image
+            if any(_iou(box, live) > 0.6 for live in live_boxes):
+                continue                      # duplicate of someone visible
+            ghosts.append((tid, box, float(age)))
+        return tracked, ghosts
+
+
+# ---------------------------------------------------------------------- offline
+def run_tracker_on_cache(cache_path, tracker_cfg=None, conf_floor=0.1, ghost_timeout_s=3.0):
+    """Replay cached detections through PeopleTracker. Yields (frame, tracked, ghosts)."""
     data = np.load(cache_path)
     frames, det = data["frame"], data["det"]
     n = int(data["frames"])
     shape = (int(data["height"]), int(data["width"]))
-    tracker = make_tracker(tracker_cfg, frame_rate=round(float(data["fps"])))
+    people = PeopleTracker(tracker_cfg, frame_rate=float(data["fps"]), ghost_timeout_s=ghost_timeout_s)
     order = np.argsort(frames, kind="stable")
     frames, det = frames[order], det[order]
     bounds = np.searchsorted(frames, np.arange(n + 1))
     for i in range(n):
         d = det[bounds[i]:bounds[i + 1]]
-        d = d[d[:, 4] >= conf_floor]
-        for tid, box, conf in track_detections(tracker, d, shape):
-            yield i, tid, box, conf
+        tracked, ghosts = people.update(d[d[:, 4] >= conf_floor], shape)
+        yield i, tracked, ghosts

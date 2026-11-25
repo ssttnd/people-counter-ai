@@ -11,13 +11,19 @@ with a new UI, a hand-labelled evaluation, and a rewritten counting algorithm.
 
 ## Features
 
-- Drag the counting line on top of the video, save it; arrows show the IN / OUT sides
-- Open any local video (or webcam / RTSP via `VIDEO_SOURCE`), play/pause and seek
-- Stable person IDs with "ghost" boxes that predict where a temporarily hidden person is
+- **Sources**: local video file, webcam, or an **IP camera** (RTSP / HTTP, e.g. Hikvision,
+  Dahua, or a phone running the IP Webcam app)
+- Drag the counting line on top of the video and save it; arrows show the IN / OUT sides
+  (*Swap IN/OUT* flips them)
+- **Fast count**: analyses a whole video without displaying it, with a progress bar, time
+  remaining, speed, live totals and cancel. At the end you get a per-minute in/out chart
+  and a CSV of every crossing
+- **Ghost IDs**: a person the detector briefly loses (hidden by the door frame or another
+  person) is shown as a grey ghost at their predicted position and gets the same ID back
+  when they reappear. A ghost that crosses the line is counted
 - Height filter: the line's real length (cm) is used as a scale, so people that are much
   too small or too large for the doorway (people far away, someone right in front of the
   camera) are tracked but never counted
-- Offline "process whole video" endpoint (`POST /process/start`) that uses the same logic
 
 ## Quick start (Windows)
 
@@ -29,7 +35,7 @@ Manual alternative:
 
 ```powershell
 python -m venv .venv
-.venv\Scriptsctivate
+.venv\Scripts\activate
 pip install -r requirements.txt
 python app.py --open-browser
 ```
@@ -40,7 +46,7 @@ Environment variables:
 
 | variable | default | meaning |
 |---|---|---|
-| `VIDEO_SOURCE` | `0` | webcam index, RTSP URL or video path used before a file is opened |
+| `VIDEO_SOURCE` | none | webcam index, camera URL or video path to open on start |
 | `PEOPLE_COUNTER_MODEL` | `yolov8n.pt` | any Ultralytics detection model, e.g. `yolo11s.pt` |
 
 ## How counting works
@@ -57,9 +63,14 @@ or Flask, so it can be tested on its own:
 3. **Confirmed tracks only.** A track has to exist for 3 frames before it can count.
 4. **Turning back.** If the same person crosses back within 1.5 s, the first event is
    cancelled.
-5. **Vanishing in the door.** When a person close to the line disappears, which is
-   typical when they walk through the door, their last motion is extrapolated for
-   0.7 s. If that crosses the segment, the crossing is completed.
+5. **Ghosts.** When the tracker loses a person (typically while walking through the door),
+   their ghost keeps moving at the person's measured walking speed (fitted on the last
+   0.5 s of real detections) for 1 s, then waits in place until the ghost timeout. The
+   tracker searches for the person exactly where the ghost is, so an ID only comes back
+   to a detection overlapping the ghost. If the ghost crosses the segment, the crossing counts; if the person reappears on
+   the original side, rule 4 cancels it. The ghosts are the tracker's own lost tracks
+   (`PeopleTracker` in `counting.py`), so the ghost you see, the ID that comes back and the
+   ID that is counted are always the same.
 6. **Height filter** (optional, see above) decides whether a crossing may be counted.
 
 ## Accuracy
@@ -70,12 +81,12 @@ shows identifiable students. Ground truth: 32 IN and 20 OUT crossings, labelled 
 ([`eval/make_gt.py`](eval/make_gt.py)). A predicted event is correct if it matches a true
 event of the same direction within ±2.5 s.
 
-Full app pipeline (`tools/eval_live.py`, what you see in the browser):
+Full pipeline (detector → tracker with ghosts → counter; live view, Fast count and the evaluation run the same code):
 
 | version | precision | recall | F1 | IN (true 32) | OUT (true 20) | speed (CPU) |
 |---|---|---|---|---|---|---|
 | previous app logic (stable IDs + ghost crossings) | 0.72 | 0.79 | 0.75 | 37 | 20 | ~17 fps |
-| **this version** | **0.92** | **0.90** | **0.91** | 32 | 17 | ~33 fps (1.1× real time) |
+| **this version** | **0.91** | **0.94** | **0.93** | 35 | 19 | ~33 fps live, 1.3× real time in Fast count |
 
 The old version's totals looked close only because its errors cancelled out: it had
 16 wrong events and 11 missed ones. Besides the new counting rules, two fixes contributed:

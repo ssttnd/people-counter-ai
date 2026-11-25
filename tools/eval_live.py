@@ -23,7 +23,7 @@ def main():
     parser.add_argument("--max-seconds", type=float, default=None)
     args = parser.parse_args()
 
-    app.selected_video = args.video
+    app.source = str(Path(args.video).resolve())
     events = []
     last_in = last_out = 0
     started = time.time()

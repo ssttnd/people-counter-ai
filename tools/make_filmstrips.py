@@ -29,8 +29,9 @@ def main():
     p2 = np.array([line[1][0] * w, line[1][1] * h])
 
     tracks = {}
-    for frame_no, tid, box, _conf in run_tracker_on_cache(cache, conf_floor=0.15):
-        tracks.setdefault(tid, []).append((frame_no, box))
+    for frame_no, tracked, _ghosts in run_tracker_on_cache(cache, conf_floor=0.15):
+        for tid, box, _conf in tracked:
+            tracks.setdefault(tid, []).append((frame_no, box))
 
     seg = p2 - p1
     seg_len2 = float(seg @ seg)
