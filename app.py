@@ -225,6 +225,11 @@ class Pipeline:
                 cfg["size_tolerance_cm"], cfg["reference_line_cm"])
             tracked.append((tid, box, countable))
         fired = self.counter.update(t, tracked, ghosts)
+        if cfg["size_filter_enabled"]:
+            # no ghosts for filtered (e.g. far away) people: they would only clutter the view
+            ghosts = [g for g in ghosts if size_is_plausible(
+                g[1], p1, p2, self.width, self.height,
+                cfg["size_tolerance_cm"], cfg["reference_line_cm"])]
         return tracked, ghosts, fired
 
     def entered_ids(self):

@@ -258,27 +258,29 @@ def _iou(a, b):
 class PeopleTracker:
     """BoT-SORT/ByteTrack driven frame by frame, plus "ghosts".
 
-    A ghost is a person the tracker has temporarily lost. It moves on from the
-    person's last *observed* position with the person's *measured* walking speed
-    (least-squares over the last ``velocity_window_s`` of real detections) for
-    ``ghost_glide_s`` seconds, then stays where it is until the timeout.
+    A ghost is a person the tracker has temporarily lost (behind a pillar, a door
+    frame or another person). It moves on from the person's last *observed*
+    position with the person's *measured* walking speed (least-squares over the
+    last ``velocity_window_s`` of real detections) until the timeout.
 
     The tracker's own prediction for a lost person is overwritten with the ghost
     every frame, so the tracker looks for the person exactly where the ghost is
-    drawn: an ID can only come back to a detection that overlaps the ghost.
+    drawn. If the tracker still starts a new ID for someone who reappears near a
+    ghost of similar size, the new ID is mapped back to the ghost's ID.
 
     Ghosts are only kept for real people (confirmed for ``ghost_min_frames``
     frames), inside the image and not on top of someone currently detected.
     """
 
     def __init__(self, cfg_path=None, frame_rate=30, ghost_timeout_s=3.0, ghost_min_frames=8,
-                 ghost_glide_s=1.0, velocity_window_s=0.5):
+                 ghost_glide_s=None, velocity_window_s=0.5):
         self.frame_rate = float(frame_rate) or 30.0
         self.tracker = make_tracker(cfg_path, frame_rate=int(round(self.frame_rate)))
         self.ghost_min_frames = ghost_min_frames
-        self.glide_frames = ghost_glide_s * self.frame_rate
+        self.glide_frames = float("inf") if ghost_glide_s is None else ghost_glide_s * self.frame_rate
         self.window_frames = max(3, int(round(velocity_window_s * self.frame_rate)))
         self._history = {}             # id -> [(frame_id, box xyxy)] of real observations
+        self._alias = {}               # tracker id -> id shown/counted (re-identified ghosts)
         self.set_ghost_timeout(ghost_timeout_s)
 
     def set_ghost_timeout(self, seconds):
@@ -289,6 +291,7 @@ class PeopleTracker:
     def reset(self):
         self.tracker.reset()
         self._history.clear()
+        self._alias.clear()
 
     def _velocity(self, hist):
         """Pixels per frame of the box centre, fitted on the last observations."""
@@ -310,6 +313,30 @@ class PeopleTracker:
         shift = self._velocity(hist) * min(frames_lost, self.glide_frames)
         return box + np.array([shift[0], shift[1], shift[0], shift[1]])
 
+    def _reidentify(self, box, frame_id):
+        """A brand-new tracker ID: return the ID of a nearby ghost of similar size, if any."""
+        cx, cy, h = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2, box[3] - box[1]
+        best, best_d = None, None
+        for st in self.tracker.lost_stracks:
+            tid = self._display_id(st.track_id)
+            if tid not in self._history or st.tracklet_len < self.ghost_min_frames:
+                continue
+            g = self._ghost_box(tid, frame_id - st.end_frame)
+            gh = g[3] - g[1]
+            if not 0.7 <= h / max(gh, 1.0) <= 1.4:
+                continue
+            d = float(np.hypot(cx - (g[0] + g[2]) / 2, cy - (g[1] + g[3]) / 2))
+            if d <= 0.6 * max(h, gh) and (best_d is None or d < best_d):
+                best, best_d = st, d
+        if best is None:
+            return None
+        best.mark_removed()                 # the ghost is now this detection
+        self.tracker.lost_stracks.remove(best)
+        return self._display_id(best.track_id)
+
+    def _display_id(self, raw):
+        return self._alias.get(int(raw)) or int(raw)
+
     def update(self, dets, shape):
         """dets: (N,5) [x1,y1,x2,y2,conf]. Returns (tracked, ghosts).
 
@@ -323,14 +350,17 @@ class PeopleTracker:
         frame_id = self.tracker.frame_id
         tracked = []
         for r in out:
-            tid, box = int(r[4]), dets[int(r[-1])][:4].astype(float)   # the real detection box
+            raw, box = int(r[4]), dets[int(r[-1])][:4].astype(float)   # the real detection box
+            if raw not in self._alias and raw not in self._history:
+                self._alias[raw] = self._reidentify(box, frame_id)
+            tid = self._display_id(raw)
             tracked.append((tid, box, float(r[5])))
             hist = self._history.setdefault(tid, [])
             hist.append((frame_id, box))
             while hist and frame_id - hist[0][0] > self.window_frames:
                 hist.pop(0)
 
-        alive = {int(st.track_id) for st in self.tracker.tracked_stracks + self.tracker.lost_stracks}
+        alive = {self._display_id(st.track_id) for st in self.tracker.tracked_stracks + self.tracker.lost_stracks}
         if len(self._history) > 2 * len(alive) + 50:
             self._history = {k: v for k, v in self._history.items() if k in alive}
 
@@ -338,7 +368,7 @@ class PeopleTracker:
         live_boxes = [box for _, box, _ in tracked]
         ghosts = []
         for st in self.tracker.lost_stracks:
-            tid = int(st.track_id)
+            tid = self._display_id(st.track_id)
             if tid not in self._history or st.mean is None:
                 continue
             lost = frame_id - st.end_frame
