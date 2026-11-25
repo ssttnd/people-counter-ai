@@ -17,6 +17,7 @@ body{margin:0;background:radial-gradient(120% 80% at 50% 0%,#145040 0%,#0d3528 4
   color:var(--ink);font:500 15px Inter,system-ui,sans-serif;overflow-x:clip}
 .wrap{max-width:1180px;margin:0 auto;padding:18px max(3vw,16px) 40px}
 header{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 28px;margin-bottom:16px}
+#quit{order:3;align-self:flex-start;min-height:34px;padding:6px 14px;font-size:13px}
 .brand{margin-right:auto}
 .brand h1{font:700 clamp(28px,4vw,40px)/1 "Barlow Condensed",sans-serif;letter-spacing:.5px;color:var(--cream);margin:0}
 .brand .src{color:var(--muted);font-size:13px;margin-top:6px;word-break:break-all}
@@ -109,6 +110,7 @@ footer a{color:var(--gold)}
       <h1>ARIA people counter</h1>
       <div class="src" id="sourceLabel">No source</div>
     </div>
+    <button id="quit" title="Stop the server">Quit</button>
     <div class="counters">
       <div class="counter in"><div class="label">In</div><div class="num" id="countIn">0</div></div>
       <div class="counter out"><div class="label">Out</div><div class="num" id="countOut">0</div></div>
@@ -491,6 +493,12 @@ $("downloadCsv").onclick = () => {
   a.href = URL.createObjectURL(new Blob([rows.join("\n")], {type: "text/csv"}));
   a.download = (lastResult.source || "count").replace(/\.[^.]+$/, "") + "_crossings.csv";
   a.click(); URL.revokeObjectURL(a.href);
+};
+
+$("quit").onclick = async () => {
+  if (!confirm("Stop the people counter?")) return;
+  try { await api("/shutdown", {}); } catch {}
+  document.body.innerHTML = '<div class="wrap"><h1 style="font:700 40px Barlow Condensed,sans-serif;color:#fff3d1">Stopped</h1><p class="hint">Start it again with start.bat. You can close this tab.</p></div>';
 };
 
 /* ---------- start ---------- */

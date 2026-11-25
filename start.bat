@@ -1,11 +1,12 @@
 @echo off
-rem One-click launcher: sets up Python environment on first run, starts the
-rem server and opens the browser at http://127.0.0.1:5000
+rem One-click launcher. First run: sets up the Python environment (console visible).
+rem After that the server runs in the background without a window and the browser opens.
+rem Stop it with the Quit button in the app.
 cd /d "%~dp0"
-title ARIA people counter
 
-if not exist ".venv\Scripts\python.exe" (
-    echo First run: creating Python environment, this takes a few minutes...
+if not exist ".venv\Scripts\pythonw.exe" (
+    title ARIA people counter - setup
+    echo First run: installing, this takes a few minutes...
     python -m venv .venv || (
         echo Python 3.10+ is required: https://www.python.org/downloads/
         pause
@@ -19,6 +20,5 @@ if not exist ".venv\Scripts\python.exe" (
     )
 )
 
-echo Starting... the browser will open automatically. Close this window to stop.
-".venv\Scripts\python.exe" app.py --open-browser
-pause
+start "" ".venv\Scripts\pythonw.exe" app.py --open-browser
+exit /b 0

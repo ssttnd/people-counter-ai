@@ -31,7 +31,9 @@ with a new UI, a hand-labelled evaluation, and a rewritten counting algorithm.
 
 Double-click **`start.bat`**. On the first run it creates a Python environment and
 installs the packages (a few minutes, needs Python 3.10+). It then starts the server
-and opens http://127.0.0.1:5000 in your browser. Close the console window to stop.
+and opens http://127.0.0.1:5000 in your browser. The server runs in the background without a
+console window (output goes to `people_counter.log`); stop it with **Quit** in the app.
+Running `start.bat` again while the server is up just opens the browser.
 
 Manual alternative:
 

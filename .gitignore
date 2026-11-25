@@ -19,3 +19,5 @@ venv/
 # local development history
 app old/
 templates/template old/
+
+*.log

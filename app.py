@@ -776,10 +776,37 @@ def _open_browser_when_ready(url, timeout=60.0):
     webbrowser.open(url)
 
 
+@app.route("/shutdown", methods=["POST"])
+def shutdown():
+    """Quit button: stop the server (it runs without a console window)."""
+    process_cancel_event.set()
+    threading.Timer(0.5, os._exit, args=(0,)).start()
+    return jsonify(success=True)
+
+
+def _already_running(url):
+    import urllib.request
+    try:
+        urllib.request.urlopen(url + "line", timeout=1)
+        return True
+    except OSError:
+        return False
+
+
 if __name__ == "__main__":
     import sys
+    import webbrowser
 
+    URL = "http://127.0.0.1:5000/"
+    if sys.stdout is None or sys.stderr is None:
+        # started with pythonw (no console): keep the output in a log file
+        log = open(ROOT / "people_counter.log", "a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = log
+    if _already_running(URL):
+        # second start: don't launch another server, just show the open one
+        if "--open-browser" in sys.argv:
+            webbrowser.open(URL)
+        sys.exit(0)
     if "--open-browser" in sys.argv:
-        threading.Thread(target=_open_browser_when_ready, args=("http://127.0.0.1:5000/",),
-                         daemon=True).start()
+        threading.Thread(target=_open_browser_when_ready, args=(URL,), daemon=True).start()
     app.run(host="0.0.0.0", port=5000, debug=False, threaded=True, use_reloader=False)
