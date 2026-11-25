@@ -160,11 +160,11 @@ def get_model():
     return _model
 
 
-def detect_people(frame):
+def detect_people(frame, imgsz=DETECTION_IMGSZ):
     """(N,5) array [x1, y1, x2, y2, conf] of people in the frame."""
     with inference_lock:
         result = get_model().predict(frame, classes=[0], conf=DETECTION_CONF,
-                                     imgsz=DETECTION_IMGSZ, verbose=False)[0]
+                                     imgsz=imgsz, verbose=False)[0]
     if result.boxes is None or len(result.boxes) == 0:
         return np.zeros((0, 5), np.float32)
     return np.hstack([result.boxes.xyxy.cpu().numpy(),
@@ -210,14 +210,16 @@ class Pipeline:
             cancel_window_s=1.5, lost_predict_s=0.0, ghost_count_s=20.0,
         )
 
-    def step(self, frame, t, p1, p2, cfg):
-        """Process one frame. Returns (tracked, ghosts, fired).
+    def step(self, frame, t, p1, p2, cfg, dets=None):
+        """Process one frame (or ready-made detections). Returns (tracked, ghosts, fired).
 
         tracked: [(id, box, countable)]  ghosts: [(id, box, age_s)]
         """
         self.people.set_ghost_timeout(cfg["ghost_timeout_seconds"])
         self.counter.set_line(p1, p2)
-        raw, ghosts = self.people.update(detect_people(frame), frame.shape[:2])
+        if dets is None:
+            dets = detect_people(frame)
+        raw, ghosts = self.people.update(dets, frame.shape[:2])
         tracked = []
         for tid, box, _conf in raw:
             countable = (not cfg["size_filter_enabled"]) or size_is_plausible(
@@ -225,6 +227,9 @@ class Pipeline:
                 cfg["size_tolerance_cm"], cfg["reference_line_cm"])
             tracked.append((tid, box, countable))
         fired = self.counter.update(t, tracked, ghosts)
+        # don't draw things that never move (parked scooters etc. detected as people)
+        tracked = [x for x in tracked if not self.people.is_static(x[0], x[1])]
+        ghosts = [g for g in ghosts if not self.people.is_static(g[0], g[1])]
         if cfg["size_filter_enabled"]:
             # no ghosts for filtered (e.g. far away) people: they would only clutter the view
             ghosts = [g for g in ghosts if size_is_plausible(
@@ -450,8 +455,36 @@ def gen():
 
 
 # ------------------------------------------------------------------ fast count
+FAST_FRAME_STRIDE = 2      # analyse every 2nd frame (same accuracy on the test video)
+FAST_ROI_MARGIN = 1.0      # analysed area: line bounding box + 1 line length on each side
+
+
+def counting_roi(p1, p2, width, height, margin=FAST_ROI_MARGIN):
+    """Region around the counting line that people must pass through."""
+    length = float(np.hypot(p2[0] - p1[0], p2[1] - p1[1]))
+    pad = max(margin * length, 0.1 * max(width, height))
+    x0 = int(max(0, min(p1[0], p2[0]) - pad))
+    x1 = int(min(width, max(p1[0], p2[0]) + pad))
+    y0 = int(max(0, min(p1[1], p2[1]) - pad))
+    y1 = int(min(height, max(p1[1], p2[1]) + pad))
+    return x0, y0, x1, y1
+
+
+def detect_people_in_roi(frame, roi):
+    """Detect only inside the ROI, at the same pixel scale as a full-frame pass."""
+    x0, y0, x1, y1 = roi
+    crop = frame[y0:y1, x0:x1]
+    scale = DETECTION_IMGSZ / max(frame.shape[:2])
+    imgsz = max(160, int(np.ceil(max(crop.shape[:2]) * scale / 32.0)) * 32)
+    dets = detect_people(crop, imgsz=min(imgsz, DETECTION_IMGSZ))
+    dets[:, [0, 2]] += x0
+    dets[:, [1, 3]] += y0
+    return dets
+
+
 def _process_video_worker(video_path, cfg, line_norm):
-    """Count a whole video as fast as possible: no drawing, no streaming."""
+    """Count a whole video as fast as possible: no drawing, no streaming,
+    every 2nd frame, and only the area around the counting line."""
     global count_in, count_out
     cap = cv2.VideoCapture(video_path)
     try:
@@ -469,7 +502,14 @@ def _process_video_worker(video_path, cfg, line_norm):
         pipeline = None
         started = time.monotonic()
         frame_no = 0
+        roi = None
         while not process_cancel_event.is_set():
+            if frame_no % FAST_FRAME_STRIDE:
+                ok = cap.grab()             # skipped frame: no pixel conversion
+                frame_no += 1
+                if not ok:
+                    break
+                continue
             ok, frame = cap.read()
             if not ok:
                 break
@@ -477,10 +517,11 @@ def _process_video_worker(video_path, cfg, line_norm):
             p1 = (int(line_norm[0][0] * w), int(line_norm[0][1] * h))
             p2 = (int(line_norm[1][0] * w), int(line_norm[1][1] * h))
             if pipeline is None:
-                pipeline = Pipeline(fps, w, h, cfg["ghost_timeout_seconds"])
-            pipeline.step(frame, frame_no / fps, p1, p2, cfg)
+                pipeline = Pipeline(fps / FAST_FRAME_STRIDE, w, h, cfg["ghost_timeout_seconds"])
+                roi = counting_roi(p1, p2, w, h)
+            pipeline.step(frame, frame_no / fps, p1, p2, cfg, dets=detect_people_in_roi(frame, roi))
             frame_no += 1
-            if frame_no % 10 == 0 or frame_no == total:
+            if frame_no % 10 < FAST_FRAME_STRIDE or frame_no >= total:
                 elapsed = time.monotonic() - started
                 rate = frame_no / max(elapsed, 1e-6)
                 with state_lock:
@@ -493,7 +534,7 @@ def _process_video_worker(video_path, cfg, line_norm):
                     })
 
         if pipeline is not None:
-            pipeline.finish(frame_no / fps, fps)
+            pipeline.finish(frame_no / fps, fps / FAST_FRAME_STRIDE)
         cancelled = process_cancel_event.is_set()
         events = [] if pipeline is None else [
             {"t": round(e["t"], 2), "dir": e["dir"], "id": e["id"]}
