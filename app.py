@@ -455,7 +455,10 @@ def gen():
 
 
 # ------------------------------------------------------------------ fast count
-FAST_FRAME_STRIDE = 2      # analyse every 2nd frame (same accuracy on the test video)
+# Video count modes. Both detect only around the counting line (ROI).
+#   fast:     every 2nd frame - ~4x real time on a laptop CPU, F1 0.90 on the test video
+#   accurate: every frame     - ~2.5x real time, same accuracy as the live view
+COUNT_MODES = {"fast": 2, "accurate": 1}
 FAST_ROI_MARGIN = 1.0      # analysed area: line bounding box + 1 line length on each side
 
 
@@ -482,9 +485,9 @@ def detect_people_in_roi(frame, roi):
     return dets
 
 
-def _process_video_worker(video_path, cfg, line_norm):
-    """Count a whole video as fast as possible: no drawing, no streaming,
-    every 2nd frame, and only the area around the counting line."""
+def _process_video_worker(video_path, cfg, line_norm, stride=2):
+    """Count a whole video as fast as possible: no drawing, no streaming, only the
+    area around the counting line, and every ``stride``-th frame."""
     global count_in, count_out
     cap = cv2.VideoCapture(video_path)
     try:
@@ -504,7 +507,7 @@ def _process_video_worker(video_path, cfg, line_norm):
         frame_no = 0
         roi = None
         while not process_cancel_event.is_set():
-            if frame_no % FAST_FRAME_STRIDE:
+            if frame_no % stride:
                 ok = cap.grab()             # skipped frame: no pixel conversion
                 frame_no += 1
                 if not ok:
@@ -517,11 +520,11 @@ def _process_video_worker(video_path, cfg, line_norm):
             p1 = (int(line_norm[0][0] * w), int(line_norm[0][1] * h))
             p2 = (int(line_norm[1][0] * w), int(line_norm[1][1] * h))
             if pipeline is None:
-                pipeline = Pipeline(fps / FAST_FRAME_STRIDE, w, h, cfg["ghost_timeout_seconds"])
+                pipeline = Pipeline(fps / stride, w, h, cfg["ghost_timeout_seconds"])
                 roi = counting_roi(p1, p2, w, h)
             pipeline.step(frame, frame_no / fps, p1, p2, cfg, dets=detect_people_in_roi(frame, roi))
             frame_no += 1
-            if frame_no % 10 < FAST_FRAME_STRIDE or frame_no >= total:
+            if frame_no % 10 < stride or frame_no >= total:
                 elapsed = time.monotonic() - started
                 rate = frame_no / max(elapsed, 1e-6)
                 with state_lock:
@@ -534,7 +537,7 @@ def _process_video_worker(video_path, cfg, line_norm):
                     })
 
         if pipeline is not None:
-            pipeline.finish(frame_no / fps, fps / FAST_FRAME_STRIDE)
+            pipeline.finish(frame_no / fps, fps / stride)
         cancelled = process_cancel_event.is_set()
         events = [] if pipeline is None else [
             {"t": round(e["t"], 2), "dir": e["dir"], "id": e["id"]}
@@ -710,6 +713,9 @@ def seek():
 @app.route("/process/start", methods=["POST"])
 def start_process():
     global stream_generation
+    mode = (request.get_json(silent=True) or {}).get("mode", "fast")
+    if mode not in COUNT_MODES:
+        return jsonify(success=False, error="mode must be 'fast' or 'accurate'"), 400
     with state_lock:
         if process_state["running"]:
             return jsonify(success=False, error="Counting is already running"), 409
@@ -722,10 +728,12 @@ def start_process():
         process_state.update({"running": True, "done": False, "cancelled": False, "progress": 0.0,
                               "frame": 0, "total_frames": 0, "status": "Starting", "error": None,
                               "count_in": 0, "count_out": 0, "fps": 0.0, "eta_seconds": None,
-                              "elapsed_seconds": 0.0, "events": [], "source": source_label(source)})
+                              "elapsed_seconds": 0.0, "events": [], "source": source_label(source),
+                              "mode": mode})
         stream_generation += 1               # stop the live view: all CPU goes to counting
         path = source
-    threading.Thread(target=_process_video_worker, args=(path, cfg, line_norm), daemon=True).start()
+    threading.Thread(target=_process_video_worker, args=(path, cfg, line_norm, COUNT_MODES[mode]),
+                     daemon=True).start()
     return jsonify(success=True)
 
 

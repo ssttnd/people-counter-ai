@@ -137,7 +137,11 @@ footer a{color:var(--gold)}
           <button id="openWebcam">Webcam</button>
         </div>
         <span class="spacer"></span>
-        <button id="fastCount" class="primary" disabled>&#9889; Fast count</button>
+        <div class="seg" role="group" aria-label="Count mode">
+          <button data-mode="fast" aria-pressed="true" title="Every 2nd frame, ~4x real time">Fast</button>
+          <button data-mode="accurate" aria-pressed="false" title="Every frame, ~2.5x real time">Accurate</button>
+        </div>
+        <button id="fastCount" class="primary" disabled>&#9889; Count video</button>
       </div>
       <p id="status">Loading...</p>
     </div>
@@ -215,7 +219,7 @@ footer a{color:var(--gold)}
 <!-- Fast count dialog -->
 <dialog id="fastDialog">
   <div class="dlg">
-    <h3 id="fastTitle">Fast count</h3>
+    <h3 id="fastTitle">Counting</h3>
     <div class="row" style="align-items:flex-end;margin-top:14px">
       <div class="pct" id="fastPct">0%</div>
       <div class="hint" id="fastEta" style="text-align:right">Starting...</div>
@@ -419,11 +423,18 @@ $("cameraForm").addEventListener("submit", async e => {
 /* ---------- fast count ---------- */
 const fastDlg = $("fastDialog");
 let fastTimer = null, lastResult = null;
+let countMode = "fast";
+try { if (localStorage.getItem("countMode") === "accurate") countMode = "accurate"; } catch {}
+const modeButtons = [...document.querySelectorAll("[data-mode]")];
+const setMode = m => { countMode = m; modeButtons.forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === m)));
+  try { localStorage.setItem("countMode", m); } catch {} };
+modeButtons.forEach(b => b.onclick = () => setMode(b.dataset.mode));
+setMode(countMode);
 $("fastCount").onclick = async () => {
-  try { await api("/process/start", {}); }
+  try { await api("/process/start", {mode: countMode}); }
   catch (e) { statusLabel.textContent = e.message; return; }
   video.src = "";                                  // free the live view
-  $("fastTitle").textContent = "Fast count";
+  $("fastTitle").textContent = countMode === "fast" ? "Counting (fast)" : "Counting (accurate)";
   $("results").hidden = true; $("downloadCsv").hidden = true; $("fastClose").hidden = true;
   $("fastCancel").hidden = false; $("fastError").textContent = "";
   $("fastBar").style.width = "0"; $("fastPct").textContent = "0%";

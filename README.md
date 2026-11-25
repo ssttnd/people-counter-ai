@@ -15,9 +15,10 @@ with a new UI, a hand-labelled evaluation, and a rewritten counting algorithm.
   Dahua, or a phone running the IP Webcam app)
 - Drag the counting line on top of the video and save it; arrows show the IN / OUT sides
   (*Swap IN/OUT* flips them)
-- **Fast count**: analyses a whole video without displaying it, only in the area around the
-  counting line and every 2nd frame: ~4× real time on a laptop CPU (10-min video in 2.5 min,
-  F1 0.90 on the test video). Progress bar, time remaining, speed, live totals and cancel. At the end you get a per-minute in/out chart
+- **Count video**: analyses a whole video without displaying it, only in the area around the
+  counting line. *Fast* mode uses every 2nd frame: ~4× real time on a laptop CPU (10-min video
+  in 2.5 min, F1 0.90 on the test video). *Accurate* uses every frame (~2.5× real time).
+  Progress bar, time remaining, speed, live totals and cancel. At the end you get a per-minute in/out chart
   and a CSV of every crossing
 - **Ghost IDs**: a person the detector briefly loses (hidden by the door frame or another
   person) is shown as a grey ghost at their predicted position and gets the same ID back
